@@ -1,0 +1,247 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<!--
+  Rémi Tavon, 2019: For more info on source file, see:
+  http://graphics.cs.cmu.edu/projects/whatMakesParis/
+  
+  This file is based on code by Petr Gronat, Michal Havlena, and Jan Knopp,
+  and significantly edited by Carl Doersch (cdoersch at cs dot cmu dot edu)
+
+  More information on the general technique can be found in:
+  GRONAT, P., HAVLENA , M., SIVIC , J., AND PAJDLA , T. 2011.
+  Building streetview datasets for place recognition and city reconstruction. 
+  Tech. Rep. CTU–CMP–2011–16, Czech Tech Univ.
+
+  Carl admits that he knows almost nothing about how to structure
+  javascript code, that the code was not well formatted to begin with, 
+  and that this file is a mess.  However, it should "just
+  work" with no input, assuming you're in chrome and have Flash installed.
+  And that the streetview API hasn't changed.  Best of luck to you.
+
+  It should output to the screen the files mapping.txt and download.txt.
+  See the README in the parent directory for info on what to do with that.
+
+  RT 2019: File has been adapted to output street view panorama data and 
+  metadata with ";" delimiter. To be copied and saved as csv file.
+  For intended header info of csv, see "ofile" div at end of this document.
+  N.B. All notes in french are added by RT, 01.2019. Translated on demand.
+-->
+
+<html>
+
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+    <title></title>
+    <!--RT 2019: le script suivant provient de Google Maps et comprend 
+    des fonctions utiles pour l'extraction des panoid et leurs métadonnées
+	Le script d'intérêt est streetview.js, qui comporte des infos sur
+	les objets Javascript "panoData"
+    -->
+    <script src="http://maps.googleapis.com/maps/api/js?sensor=false"></script>
+
+    <script src="points.js">//external file with list of points to submit as input</script>
+
+    <script> 
+
+    //parse json info from "points.js" external .js file
+    obj = JSON.parse(text);
+    //liste de variables crées
+    var numid,panoClient,map,nextPanoId,npanos=0,nextLatLng,startLatLng,cityidx=0, nskips=0
+    var citynames=['bourg-joly'] //city name. Useless with current code.
+    var citylat=[45.631363] //starting latitutde
+    var citylng=[-72.96672] //starting longitude
+    var npanos_max=5000 //Max panoramas before stopping
+    var pano_radius=5 
+    //Queen-victoria: 49m=60panos,10m=244panos,8m=292panos,6m=317panos,5.5m=320,5m=320panos,4.5m=316panos,4m=300panos
+    //Centre-Ville: 5m=2591panos, 8m=2405, 6
+    //Bourg-Joly: 
+    
+    function fakefilewrite(filenm,str){
+        filediv=document.getElementById(filenm);
+        if(filenm=="glog"){
+          filediv.innerHTML=str+'<br/>'+filediv.innerHTML;
+        }else{
+          filediv.innerHTML=filediv.innerHTML+str+'<br/>';
+        }
+    }
+
+    index = 0
+    function nextlatlong(){
+        //récupérer les coordonnées du prochain point
+        nextlat=obj.points[index].latitude;
+        nextlng=obj.points[index].longitude;
+        //console.log(nextlat,nextlng)
+        index++
+        return new google.maps.LatLng(nextlat,nextlng);
+    }
+
+    function initialize() {
+	//calls the following functions: randLatLng, 
+	//fakefilewrite, showPanoData (in turn, calls "insert" and "isMember" functions)
+      startLatLng = new google.maps.LatLng(citylat[cityidx],citylng[cityidx]);
+      numid = 0;
+      hashtable = {};
+     panoClient = new google.maps.StreetViewService();      
+     var myOptions = {
+          center: new google.maps.LatLng(obj.points[0].latitude,obj.points[0].longitude),
+          zoom: 15,
+          mapTypeId: google.maps.MapTypeId.ROADMAP
+        }; 
+      map = new google.maps.Map(document.getElementById("map_canvas"),myOptions);
+      map.setCenter(startLatLng, 15);
+      nextLatLng = nextlatlong();
+      //console.log(nextLatLng) //ajouté par RT
+      fakefilewrite('mfile',citynames[cityidx]);
+      //fakefilewrite('ofile',citynames[cityidx]);
+      //fait appel à "google.maps.StreetViewService()" nextLatLng = location, pano_radius = radius, showPanoData
+      panoClient.getPanoramaByLocation(nextLatLng, pano_radius, showPanoData);
+    }
+
+    //Gronat 2011: hastable is used to prevent inserting duplicate panorama IDs in the panorama list, 
+    //so panorama list generation proceeds in a wave from the start position and terminates either 
+    //when all the linked panoramas, i.e. the whole city segment, have been processed or when the 
+    //server rejects the query.
+    function isMember(panoId) {
+      var level = 0;
+      var current = hashtable[panoId.charAt(level++)];
+      while ((current != null) && (level < panoId.length)) {
+        current = current[panoId.charAt(level++)];
+      }
+      return (current != null);
+    }
+
+    // je ne comprends pas ce que fait cette fonction. il y a la même boucle while que dans la fonction "isMember"
+    function insert(panoId) {
+      var level = 0;
+      var currentold = hashtable;
+      //return character at specified level after incrementation ("++")
+      var current = currentold[panoId.charAt(level++)];
+      while ((current != null) && (level < panoId.length)) {
+        currentold = current;
+        current = currentold[panoId.charAt(level++)];
+      }
+      if (current == null) {
+        level--;
+        while (level < panoId.length) {
+          currentold[panoId.charAt(level)] = {};
+          currentold = currentold[panoId.charAt(level++)];
+        }
+      }
+    }
+
+    function showPanoData(panoData,gstatus) {
+    //showPanoData loop stops with defined threshold
+      //var displaynext = ["<br/n>Location searched: " + nextLatLng] //ajouté par Rémi
+      //fakefilewrite('tmp',displaynext); //ajouté par Rémi
+
+      // 1re condition: si le gstatus n'est pas OK --> imprimer dans la div 'glog'
+      if (gstatus != "OK") {
+        fakefilewrite('glog', 'showPanoData: Server rejected with code: ' + gstatus);
+        //nextLatLng est ce qui définit les prochaines coordonnées où chercher un GSV.
+        nextLatLng = nextlatlong();
+        //défini un temps d'attente avant d'exécuter le code entre parenthèses.
+        //pano_radios is defined radius (meters?), showPanoData is function.
+        //100 is delay before execution in milliseconds
+        setTimeout("panoClient.getPanoramaByLocation(nextLatLng, pano_radius, showPanoData);", 100);
+        return;
+      }
+
+      // 2e condition: if pano not null, si on se fie au output de la fonction isMember
+      if (!isMember(panoData.location.pano)) {
+          insert(panoData.location.pano);
+          map.setCenter(nextLatLng, 15); //interacts with top map. 15 is zoom level.
+          fakefilewrite('glog','Viewer moved to ' + panoData.location.latLng);
+
+          //to be printed in "ofile" div (download.txt), i.e. for full panorama download
+          // var saveDataString = [panoData.location.pano + "\t" + panoData.location.latLng + "\r\n"];
+          // fakefilewrite('ofile',saveDataString);
+
+          //to be printed in "mfile" div (mapping.txt), i.e. for panocutouts download
+          // var yawidx=0;
+          // for (yawidx=0; yawidx<2; yawidx++) {
+          //       var yaw = yawidx*360/2+90;
+          //       var shiftyaw = (360 /*- parseFloat(panoData.Projection.pano_yaw_deg)*/ + yaw) % 360;
+          //       var pitchidx=0;
+          //       for (pitchidx=0; pitchidx<1; pitchidx++) {
+          //             var pitch = "-004";
+          //             if (pitchidx == 1) pitch = "-028";
+          //             var saveDataString = [(numid)+ " " + Math.round(shiftyaw*Math.pow(10,4))/Math.pow(10,4) + " " + Math.round(pitch*Math.pow(10,4))/Math.pow(10,4) + " " + panoData.location.latLng.lat() + "_" + panoData.location.latLng.lng() + "_" + Math.round(yaw*Math.pow(10,4))/Math.pow(10,4) + "_" + pitch + ".JPG\r\n" + " " + citynames[cityidx] ]; 
+          //             fakefilewrite('mfile',saveDataString);
+          //             mfile.Write(saveDataString);
+          //       }
+          // } 
+
+          var saveDataString = [npanos + ";" + //Index of panorama. Starts at 0.
+          						panoData.location.pano + ";" + //Panorama ID
+          						panoData.location.latLng + ";" + //LatLng
+          						panoData.imageDate + ";" + //Panorama Date (month/year)
+          						panoData.location.description + ";" + //Description. Often address or other place name 
+          						panoData.tiles.centerHeading + ";" + // Absolute heading of vehicule when panorama captured
+          						panoData.tiles.tileSize + ";" + //Tile size. Always 512x512.
+          						panoData.links.length + ";" + //Info about neighboring panoramas? (see Gronat 2011)
+          						panoData.time.length + ";" + //Total panoramas for this location if multiples dates?
+          						panoData.copyright + ";" + //Copyright, differs from "Google" when external data
+          						nextLatLng + ";" + 
+          						//other potential metadata of interest
+          						//panoData.tiles + ";" + // This is an unknown javascript Obejct
+          						//panoData.disabled + ";" + //Always "false" when extracted. Info about wheelchair access?          					
+          						//panoData.m + ";" + panoData.A + ";" + panoData.l + ";" +
+          						panoData.takeDownUrl + "\r\n"]; //takeDownUrl. Unknown info.
+          fakefilewrite('meta',saveDataString);
+          //trying to separate lat from lng in panoData.location.latLng to quickly create points in Google Earth...
+          //var keys = Object.keys(panoData.location.latLng);
+          //console.log(keys)
+          //console.log(typeof panoData.location.latLng)
+          
+          //a section of code has been deleted here. See yawidx variable and following for loop in original code. This info was meant
+          //to be outputted in "mfile" div.
+	      //Incrementation of numid and npanos
+	      numid++;
+          npanos++;
+          //console.log(npanos)
+        }else{
+          nskips=nskips+1;
+        }
+        //this is the info printed on top of "ofile" div.
+        document.getElementById('progress').innerHTML="points searched: "+(index+1)+"/"+obj.points.length+"<br/>number of panos found: "+(npanos)+"<br/>skips: "+(nskips+1)+"<br/>radius submitted: "+pano_radius;
+        if ((index+1) >= obj.points.length){
+        	return
+        }
+        //if npanos reaches defined threshold (according to cityidx)--> return
+        if ((npanos >= npanos_max&&cityidx==0)||(npanos>=npanos_max/10&&cityidx>0)) { //original npanos thresholds: 7500 and 750
+            cityidx++;
+            if(cityidx>=citynames.length){
+                return;
+            }
+            npanos=0;
+            startLatLng = new google.maps.LatLng(citylat[cityidx],citylng[cityidx]);
+        }
+        // c'est ici qu'il faut changer pour que les coordonnées soumises soient une liste provenant d'un fichier maison? En fait il faut changer pour tous les "if"
+        nextLatLng = nextlatlong();
+        setTimeout("panoClient.getPanoramaByLocation(nextLatLng, pano_radius, showPanoData);", 100);
+    }
+    </script>
+</head>
+
+  <body onload="initialize()">
+    <div id="map_canvas" style="width: 800px; height: 550px"></div>
+    <div id="glog" style="width:800px;height:300px;overflow:scroll"></div>
+    <div id="tmp"></div>
+    <div id="progress"></div>    
+    <div id="mfile">(see README from Doersch 2012)<br/><br/>mapping.txt:<br/></div>
+    <div id="ofile">download.txt:<br/></div>
+    <div id="meta"><br/>metadata.csv (delimiter is ";"): <br/>
+    	index;
+    	pano_Id;
+    	LatLng;
+    	imageDate;
+    	description;
+    	tiles.centerHeading;
+    	tiles.tileSize;
+    	links.length;
+    	time.length;
+    	panoData.copyright;
+    	inputLatLng;
+    	takeDownUrl<br/></div>
+  </body>
+
+</html>
